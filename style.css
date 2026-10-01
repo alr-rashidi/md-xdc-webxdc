@@ -1,0 +1,589 @@
+/* ==========================================================================
+   MD-XDC — neo-brutalist chrome
+   Flat warm surfaces, 2px ink lines, hard offset shadows, zero rounding.
+   Every edge is drawn with --ink, so how blunt the UI is is tuned in one place.
+   The rendered note keeps the document's own palette (see .preview-pane below)
+   so the preview still matches the exported .xdc exactly.
+   ========================================================================== */
+
+/* ---------- Theme tokens ---------- */
+:root,
+:root[data-theme="light"] {
+  /* Three-step surface ramp: the further forward a layer sits, the lighter it
+     gets, which is what keeps pure black borders legible on every layer. */
+  --bg: #efe7d2;        /* layer 0 — body, top bar, editor */
+  --bg-soft: #faf5e8;   /* layer 1 — buttons, strips, media thumbs */
+  --bg-raised: #fffdf7; /* layer 2 — modals, menus, text inputs */
+  --fg: #12100c;
+  --muted: #6a6253;
+  --border: #000000;
+  --ink: #000000;
+  --accent: #2b5bff;
+  --accent-contrast: #ffffff;
+  --pop: #ffd84d;
+  --pop-fg: #12100c;
+  --danger: #ff5252;
+  --danger-fg: #12100c;
+  --caret: #12100c;
+  --sb-track: #e3dac1;  /* scrollbar trough */
+  --sb-thumb: #000000;  /* scrollbar grip — ink, like every other edge */
+  --bw: 2px;
+  --shadow-sm: 2px 2px 0 var(--ink);
+  --shadow: 4px 4px 0 var(--ink);
+  --shadow-lift: 4px 4px 0 var(--ink);
+  --shadow-lg: 8px 8px 0 var(--ink);
+  /* One token per type the vendored highlighter actually emits. */
+  --syn-kwd: #cf222e;      /* keywords */
+  --syn-func: #8250df;     /* function and method names */
+  --syn-type: #0550ae;     /* types and interfaces */
+  --syn-class: #0550ae;    /* class names */
+  --syn-bool: #0550ae;     /* true / false and other literals */
+  --syn-str: #0a3069;
+  --syn-cmnt: #6e7781;
+  --syn-num: #0550ae;
+  --syn-var: #953800;
+  --syn-oper: #24292f;
+  --syn-section: #0550ae;  /* markdown headings */
+  --syn-insert: #1a7f37;   /* diff additions */
+  --syn-deleted: #cf222e;  /* diff removals */
+  --syn-err: #cf222e;
+}
+:root[data-theme="dark"] {
+  /* Same lighter-per-layer ramp, bright enough that black borders still read. */
+  --bg: #322d25;        /* layer 0 */
+  --bg-soft: #423b30;   /* layer 1 */
+  --bg-raised: #514a3d; /* layer 2 */
+  --fg: #f7f2e6;
+  --muted: #b5a992;
+  --border: #000000;
+  --ink: #000000;
+  --accent: #4d7cff;
+  --accent-contrast: #ffffff;
+  --pop: #ffd84d;
+  --pop-fg: #12100c;
+  --danger: #ff5252;
+  --danger-fg: #12100c;
+  --caret: #f7f2e6;
+  --sb-track: #1b1813;  /* darker than layer 0, so the trough reads as a notch */
+  --sb-thumb: #8d8471;
+  --syn-kwd: #ff7b72;
+  --syn-func: #d2a8ff;
+  --syn-type: #79c0ff;
+  --syn-class: #79c0ff;
+  --syn-bool: #79c0ff;
+  --syn-str: #a5d6ff;
+  --syn-cmnt: #8b949e;
+  --syn-num: #79c0ff;
+  --syn-var: #ffa657;
+  --syn-oper: #e6edf3;
+  --syn-section: #79c0ff;
+  --syn-insert: #7ee787;
+  --syn-deleted: #ff7b72;
+  --syn-err: #ff7b72;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* ---------- Scrollbars ---------- */
+/* Every scrolling surface — the editor, the preview pane, code blocks inside the
+   note, the media list — gets the same bar. Native scrollbars follow the OS and
+   flash bright out of a dark UI, so they are painted here: dark trough with an
+   ink grip in light mode, warm grey grip on a near-black trough in dark mode.
+   These are the Chromium/WebView rules, which covers every runtime this app has
+   (Electron desktop, Android webview). The Firefox block is fenced off because
+   setting the standard properties makes Chromium ignore the webkit rules. */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: var(--sb-track); }
+::-webkit-scrollbar-thumb { background: var(--sb-thumb); border: 2px solid var(--sb-track); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: var(--pop); }
+::-webkit-scrollbar-corner { background: var(--sb-track); }
+@supports (-moz-appearance: none) {
+  :root { scrollbar-width: thin; scrollbar-color: var(--sb-thumb) var(--sb-track); }
+}
+
+/* ---------- Icons ---------- */
+.ico { width: 16px; height: 16px; flex: 0 0 16px; display: block; stroke-width: 2.4; }
+.ico-sun { display: none; }
+:root[data-theme="dark"] .ico-moon { display: none; }
+:root[data-theme="dark"] .ico-sun { display: block; }
+.ico-rtl { display: none; }
+:root[data-dir="rtl"] .ico-ltr { display: none; }
+:root[data-dir="rtl"] .ico-rtl { display: block; }
+
+/* ---------- Top bar ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 10px 14px;
+  border-bottom: var(--bw) solid var(--ink);
+  background: var(--bg);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+/* The name reads as a sticker on the paper. */
+.brand {
+  margin-right: 10px;
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 7px 10px;
+  background: var(--pop);
+  color: var(--pop-fg);
+  border: var(--bw) solid var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.group { display: flex; align-items: center; gap: 8px; }
+/* Brand + media cluster sit tight on the left (the brand's margin-right is
+   their separator); the view/theme/Send cluster drifts right, with a minimum
+   gap if the bar runs out of room. */
+.group-view { margin-left: auto; padding-inline-start: 16px; }
+
+.btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 8px 11px;
+  border: var(--bw) solid var(--ink);
+  border-radius: 0;
+  background: var(--bg-soft);
+  color: var(--fg);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: transform .06s ease, box-shadow .06s ease, background .12s ease, color .12s ease;
+}
+/* Hover lifts the plate, press pushes it flat onto the paper. */
+.btn:not(:disabled):hover { background: var(--pop); color: var(--pop-fg); transform: translate(-1px, -1px); box-shadow: var(--shadow-lift); }
+.btn:not(:disabled):active { transform: translate(2px, 2px); box-shadow: none; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary,
+/* Primary keeps its accent on hover — only the plate lifts, the color stays. */
+.btn.primary:not(:disabled):hover { background: var(--accent); color: var(--accent-contrast); }
+.btn.icon { padding: 8px 9px; }
+.btn.sm { padding: 5px 9px; font-size: 12px; box-shadow: none; }
+.btn.sm:not(:disabled):hover { transform: none; box-shadow: var(--shadow-sm); }
+.btn.busy .ico { animation: ico-spin .9s linear infinite; }
+@keyframes ico-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .btn.busy .ico { animation: none; }
+  .btn { transition: none; }
+}
+.btn.danger,
+.btn.danger:not(:disabled):hover { background: var(--danger); color: var(--danger-fg); }
+
+.seg { display: inline-flex; border: var(--bw) solid var(--ink); border-radius: 0; overflow: hidden; box-shadow: var(--shadow-sm); }
+/* Icon-only: the segment matches the header's other buttons and stops eating
+   the toolbar on a phone. Labels live in title/aria-label. */
+.seg-btn { font: inherit; font-size: 13px; font-weight: 700; padding: 8px 9px; background: var(--bg-soft); color: var(--fg); border: 0; cursor: pointer; border-right: var(--bw) solid var(--ink); display: inline-flex; align-items: center; justify-content: center; }
+.seg-btn:last-child { border-right: 0; }
+.seg-btn:not(.active):hover { background: var(--pop); color: var(--pop-fg); }
+.seg-btn.active { background: var(--accent); color: var(--accent-contrast); }
+
+.count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--fg);
+  color: var(--bg);
+  border-radius: 0;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+.count-badge[hidden] { display: none; }
+
+/* ---------- Main / panes / divider ---------- */
+.main { flex: 1; display: flex; min-height: 0; }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.editor-pane { flex: 1 1 0; }
+.preview-pane { flex: 1 1 0; overflow: auto; padding: 24px; background: var(--bg); }
+.main.view-split .editor-pane { flex: 0 0 var(--split, 50%); }
+
+.divider {
+  flex: 0 0 6px;
+  background: var(--ink);
+  cursor: col-resize;
+  position: relative;
+  flex-shrink: 0;
+  /* Without this, touch drags are claimed by the scroll gesture and the
+     drag dies with a pointercancel before it ever moves. */
+  touch-action: none;
+}
+.divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+/* Fingers need more than a 6px strip: widen the divider and its invisible
+   grab zone on touch devices. */
+@media (pointer: coarse) {
+  /* .main .divider (0,2,0) outranks the stacked-layout 6px rule further down. */
+  .main .divider { flex: 0 0 12px; }
+  .main .divider::after { inset: 0 -6px; }
+}
+.divider:hover, .divider.dragging { background: var(--pop); }
+
+.main.view-edit .preview-pane,
+.main.view-preview .editor-pane { display: none; }
+.main.view-edit .divider,
+.main.view-preview .divider { display: none; }
+.main.view-edit .editor-pane,
+.main.view-preview .preview-pane { flex: 1 1 0; }
+
+/* ---------- Editor (one contenteditable element, syntax highlighted) ---------- */
+.editor {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  font-weight: 400;
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  letter-spacing: 0;
+  outline: none;
+  cursor: text;
+  caret-color: var(--caret);
+  /* The editor follows the document direction set by the header button, exactly
+     like the note does — the button has to visibly do something here. Per-line
+     auto direction (unicode-bidi: plaintext) used to live on this rule, but it
+     overrides the element direction for every line, so a Latin line stayed
+     left-aligned in an RTL document and the button looked broken. */
+  -webkit-font-smoothing: antialiased;
+}
+:root[data-dir="rtl"] .editor { direction: rtl; }
+.editor::selection { background: var(--pop); color: var(--pop-fg); }
+.editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
+}
+.editor > * { white-space: pre-wrap; overflow-wrap: break-word; }
+
+/* speed-highlight token colors. The vendored build emits exactly these fourteen
+   types, so these are the only .shj-syn-* rules that can ever match. Types with
+   no rule here simply inherit the editor's text color. */
+.shj-syn-kwd     { color: var(--syn-kwd); font-weight: 600; }
+.shj-syn-func    { color: var(--syn-func); }
+.shj-syn-type    { color: var(--syn-type); }
+.shj-syn-class   { color: var(--syn-class); }
+.shj-syn-bool    { color: var(--syn-bool); }
+.shj-syn-str     { color: var(--syn-str); }
+.shj-syn-cmnt    { color: var(--syn-cmnt); font-style: italic; }
+.shj-syn-num     { color: var(--syn-num); }
+.shj-syn-var     { color: var(--syn-var); }
+.shj-syn-oper    { color: var(--syn-oper); }
+.shj-syn-section { color: var(--syn-section); font-weight: 700; }
+.shj-syn-insert  { color: var(--syn-insert); }
+.shj-syn-deleted { color: var(--syn-deleted); }
+.shj-syn-err     { color: var(--syn-err); font-weight: 700; }
+
+/* ---------- The previewed document ----------
+   The pane renders exactly what the export writes out, so it carries the
+   document's palette (the same values EXPORT_CSS uses) instead of the app's
+   blunt one. That is what keeps preview and .xdc pixel-identical: --bg, --fg,
+   --border and --accent are redefined here and nowhere else. */
+:root[data-theme="light"] .preview-pane,
+.preview-pane {
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --fg: #1f2328;
+  --muted: #656d76;
+  --border: #d0d7de;
+  --accent: #0969da;
+  --code-bg: #eff1f3;
+}
+:root[data-theme="dark"] .preview-pane {
+  --bg: #0d1117;
+  --bg-soft: #161b22;
+  --fg: #e6edf3;
+  --muted: #8b949e;
+  --border: #30363d;
+  --accent: #2f81f7;
+  --code-bg: #161b22;
+}
+
+/* ---------- Note content (preview + export share this look) ---------- */
+.note {
+  /* The note is a flex item of the preview pane, and `margin: 0 auto` turns off
+     flex stretching — without an explicit width it falls back to fit-content,
+     which a long code block (white-space: pre, nothing to wrap) inflates until
+     max-width stops it, pushing the preview wider than its own pane. An explicit
+     `width: 100%` bounds it: the pane's width, capped at 760px and centered.
+     min-width: 0 is belt-and-braces for the automatic-minimum-size path.
+     App-only: the export styles .note with its own sheet, where it is a plain
+     block in body and has no such problem. */
+  width: 100%;
+  min-width: 0;
+  max-width: 760px;
+  margin: 0 auto;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--fg);
+  /* Long unbroken tokens — pasted URLs, hashes, inline code — wrap instead of
+     running past the note's edge. `anywhere` rather than `break-word` so the
+     note's min-content size stays small too, which is what keeps a wide table or
+     a long word from ever inflating the pane. Inherited by every descendant. */
+  overflow-wrap: anywhere;
+}
+/* The note follows the document direction (header button) and nothing else:
+   unicode-bidi: plaintext is used in the editor, not here. */
+:root[data-dir="rtl"] .note { direction: rtl; }
+/* Code stays left-to-right even in RTL documents */
+:root[data-dir="rtl"] .note pre,
+:root[data-dir="rtl"] .note pre code,
+:root[data-dir="rtl"] .note :not(pre) > code {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: left;
+}
+.note > *:first-child { margin-top: 0; }
+.note h1 { font-size: 1.9em; margin: 1.2em 0 .5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.note h2 { font-size: 1.5em; margin: 1.1em 0 .5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+.note h3 { font-size: 1.25em; margin: 1em 0 .4em; }
+.note h4 { font-size: 1.05em; margin: 1em 0 .4em; }
+.note h5, .note h6 { font-size: .95em; margin: 1em 0 .4em; color: var(--muted); }
+.note p { margin: .65em 0; }
+.note a { color: var(--accent); text-decoration: none; }
+.note a:hover { text-decoration: underline; }
+.note strong { font-weight: 700; }
+.note em { font-style: italic; }
+.note ul, .note ol { margin: .6em 0; padding-inline-start: 1.6em; }
+.note li { margin: .25em 0; }
+.note li input[type="checkbox"] { margin-inline-end: .4em; transform: translateY(-1px); }
+/* Task-list items show the checkbox only — never a bullet as well. The class comes
+   from marked. The :has() fallback for hand-written checkboxes sits in its own rule
+   below on purpose: if a browser doesn't understand one selector in a group, it
+   throws away the whole rule, so it must not share one with the rules that matter. */
+.note li.task-list-item { list-style: none; }
+.note li.task-list-item + li.task-list-item { margin-top: 3px; }
+/* A list made up entirely of task items draws no markers, so drop the indentation
+   that existed only to make room for them. Mixed lists keep it, so their bullets
+   stay aligned with the checkboxes. */
+.note ul.pure-task-list, .note ol.pure-task-list { padding-inline-start: 0; }
+.note li:has(> input[type="checkbox"]) { list-style: none; }
+/* Plain quotes get the gray bar. Alerts set their own colored bar further down —
+   :where() keeps this rule from outranking them (it used to win, which is why
+   alert borders were gray in light mode but colored in dark mode). */
+.note blockquote:not(.alert) { margin: .8em 0; padding: .2em 1em; color: var(--muted); border-left: 3px solid var(--border); }
+.note code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .88em; background: var(--code-bg); padding: .15em .4em; border-radius: 5px; }
+/* Code soft-wraps like everything else instead of scrolling sideways: a long line
+   continues on the next row with its indentation intact (pre-wrap keeps leading
+   whitespace). overflow-x stays as a safety net for anything that still cannot
+   wrap, but with wrapping on there is nothing left to scroll to. */
+.note pre { background: var(--code-bg); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: .8em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note pre code { background: none; padding: 0; font-size: .85em; line-height: 1.5; }
+.note img { max-width: 100%; height: auto; border-radius: 8px; margin: .6em 0; }
+.note video { max-width: 100%; border-radius: 8px; margin: .6em 0; }
+.note audio { width: 100%; margin: .6em 0; }
+.note hr { border: 0; border-top: 1px solid var(--border); margin: 1.4em 0; }
+.note table { border-collapse: collapse; width: 100%; margin: .8em 0; font-size: .95em; }
+/* Table cells are centered by default; GFM column alignment (`:---`, `:---:`, `---:`) arrives as an align *attribute*,
+   which any CSS text-align would override — so spell each case out. */
+.note th[align="left"], .note td[align="left"] { text-align: left; }
+.note th[align="center"], .note td[align="center"] { text-align: center; }
+.note th[align="right"], .note td[align="right"] { text-align: right; }
+.note th, .note td { border: 1px solid var(--border); padding: 6px 10px; text-align: center; }
+.note th { background: var(--bg-soft); font-weight: 700; }
+.note tr:nth-child(even) td { background: var(--bg-soft); }
+
+/* GitHub-style alerts */
+.alert { margin: .8em 0; padding: .4em 1em; border-left: 3px solid var(--border); border-radius: 6px; background: var(--bg-soft); }
+.alert > *:first-child { margin-top: 0; }
+.alert > *:last-child { margin-bottom: 0; }
+.alert-title { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.alert > p.alert-title { margin: .2em 0 .1em; }
+.alert > p { margin: .3em 0; }
+.alert-title::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+.note .alert-note { border-left-color: #0969da; } .note .alert-note .alert-title { color: #0969da; }
+.note .alert-tip { border-left-color: #1a7f37; } .note .alert-tip .alert-title { color: #1a7f37; }
+.note .alert-important { border-left-color: #8250df; } .note .alert-important .alert-title { color: #8250df; }
+.note .alert-warning { border-left-color: #9a6700; } .note .alert-warning .alert-title { color: #9a6700; }
+.note .alert-caution { border-left-color: #cf222e; } .note .alert-caution .alert-title { color: #cf222e; }
+:root[data-theme="dark"] .note .alert-note { border-left-color: #2f81f7; } :root[data-theme="dark"] .note .alert-note .alert-title { color: #2f81f7; }
+:root[data-theme="dark"] .note .alert-tip { border-left-color: #3fb950; } :root[data-theme="dark"] .note .alert-tip .alert-title { color: #3fb950; }
+:root[data-theme="dark"] .note .alert-important { border-left-color: #a371f7; } :root[data-theme="dark"] .note .alert-important .alert-title { color: #a371f7; }
+:root[data-theme="dark"] .note .alert-warning { border-left-color: #d29922; } :root[data-theme="dark"] .note .alert-warning .alert-title { color: #d29922; }
+:root[data-theme="dark"] .note .alert-caution { border-left-color: #f85149; } :root[data-theme="dark"] .note .alert-caution .alert-title { color: #f85149; }
+
+/* ---------- RTL documents ---------- */
+/* The header button sets the document direction; per-block text keeps its own
+   direction via unicode-bidi: plaintext, so mixed notes still render correctly. */
+/* List indentation and the checkbox gap are logical properties now, so they flip
+   with the direction on their own — only the alert bars need an RTL override. */
+:root[data-dir="rtl"] .note blockquote:not(.alert), :root[data-dir="rtl"] .note .alert { border-left: 0; border-right: 3px solid var(--border); }
+:root[data-dir="rtl"] .note .alert-note { border-right-color: #0969da; }
+:root[data-dir="rtl"] .note .alert-tip { border-right-color: #1a7f37; }
+:root[data-dir="rtl"] .note .alert-important { border-right-color: #8250df; }
+:root[data-dir="rtl"] .note .alert-warning { border-right-color: #9a6700; }
+:root[data-dir="rtl"] .note .alert-caution { border-right-color: #cf222e; }
+:root[data-dir="rtl"][data-theme="dark"] .note .alert-note { border-right-color: #2f81f7; }
+:root[data-dir="rtl"][data-theme="dark"] .note .alert-tip { border-right-color: #3fb950; }
+:root[data-dir="rtl"][data-theme="dark"] .note .alert-important { border-right-color: #a371f7; }
+:root[data-dir="rtl"][data-theme="dark"] .note .alert-warning { border-right-color: #d29922; }
+:root[data-dir="rtl"][data-theme="dark"] .note .alert-caution { border-right-color: #f85149; }
+
+/* ---------- Modal ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 16, 12, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 16px;
+  opacity: 1;
+  transition: opacity .2s ease, display .2s allow-discrete;
+}
+.modal[hidden] { display: none; opacity: 0; pointer-events: none; }
+/* A modal opened on top of another (media library above the send dialog)
+   must cover it, so later-in-DOM wins via a raised layer. */
+.modal.stack-top { z-index: 60; }
+@starting-style {
+  .modal:not([hidden]) { opacity: 0; }
+}
+.modal-card {
+  background: var(--bg-raised);
+  border: var(--bw) solid var(--ink);
+  border-radius: 0;
+  box-shadow: var(--shadow-lg);
+  width: min(560px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.modal[hidden] .modal-card { opacity: 0; transform: translateY(10px) scale(.97); }
+@starting-style {
+  .modal:not([hidden]) .modal-card { opacity: 0; transform: translateY(10px) scale(.97); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .modal, .modal-card { transition-duration: .01ms; }
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: var(--bw) solid var(--ink); background: var(--bg-soft); gap: 8px; }
+.modal-head h2 { margin: 0; font-size: .95rem; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+.modal-actions { display: flex; align-items: center; gap: 8px; }
+.modal-body { padding: 16px; overflow: auto; }
+.mrow { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: var(--bw) solid var(--ink); flex-wrap: wrap; }
+.mrow:last-child { border-bottom: 0; padding-bottom: 0; }
+.mactions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.mprev { width: 56px; height: 56px; flex-shrink: 0; border-radius: 0; overflow: hidden; background: var(--bg-soft); display: flex; align-items: center; justify-content: center; border: var(--bw) solid var(--ink); color: var(--muted); }
+.mprev img, .mprev video { width: 100%; height: 100%; object-fit: cover; }
+.mmeta { flex: 1; min-width: 0; }
+.mname { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msize { font-size: 12px; color: var(--muted); margin-top: 3px; }
+/* Flag for files the note never references — they would silently miss the .xdc. */
+.mtag {
+  display: inline-block; margin-left: 8px; padding: 1px 6px;
+  font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em;
+  background: var(--danger); color: var(--danger-fg);
+  border: var(--bw) solid var(--ink);
+  vertical-align: 1px;
+}
+.mrow.unused .mname { color: var(--muted); }
+.empty { color: var(--muted); padding: 22px 16px; text-align: center; border: var(--bw) dashed var(--ink); font-weight: 700; }
+
+/* ---------- Send dialog ---------- */
+.warn-box {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 16px; padding: 10px 12px;
+  background: var(--pop); color: var(--pop-fg);
+  border: var(--bw) solid var(--ink); box-shadow: var(--shadow-sm);
+  font-size: 12px; font-weight: 700;
+}
+.warn-box[hidden] { display: none; }
+.warn-link {
+  margin-left: auto; padding: 3px 8px;
+  font: inherit; font-weight: 900; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--pop-fg); background: transparent;
+  border: var(--bw) solid var(--pop-fg); border-radius: 0; cursor: pointer;
+}
+.warn-link:hover { background: var(--pop-fg); color: var(--pop); }
+.field { display: block; margin: 0 0 16px; }
+.field > span { display: block; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 7px; }
+.field input[type="text"] {
+  width: 100%; padding: 10px; font: inherit; font-size: 14px; font-weight: 700;
+  color: var(--fg); background: var(--bg-raised); border: var(--bw) solid var(--ink); border-radius: 0;
+}
+.field input[type="text"]:focus { outline: none; background: var(--pop); color: var(--pop-fg); }
+.icon-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.icon-preview {
+  width: 56px; height: 56px; flex: 0 0 56px; border-radius: 0; overflow: hidden;
+  border: var(--bw) solid var(--ink); background: var(--bg-raised); color: var(--muted);
+  display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;
+}
+.icon-preview img { width: 100%; height: 100%; object-fit: contain; }
+/* The active icon source is a filled plate, not a tinted outline. */
+.icon-row .btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-contrast); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px; border-top: var(--bw) solid var(--ink); background: var(--bg-soft); }
+
+/* ---------- Toast ---------- */
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--pop); color: var(--pop-fg); border: var(--bw) solid var(--ink); box-shadow: var(--shadow); padding: 10px 16px; border-radius: 0; font-size: 13px; font-weight: 700; z-index: 60; }
+.toast[hidden] { display: none; }
+
+/* ---------- Responsive ---------- */
+@media (max-width: 820px) {
+  .main.view-split { flex-direction: column; }
+  .main.view-split .editor-pane { flex: 0 0 var(--split, 50%); }
+  .divider { cursor: row-resize; flex: 0 0 6px; width: auto; }
+}
+/* Phones: keep the toolbar to as few rows as possible. Secondary buttons go
+   icon-only and everything tightens up, so the header stops eating the screen. */
+@media (max-width: 640px) {
+  /* Hard shadows cost real estate on a phone, so they shrink rather than stack.
+     The :root[data-theme] branch is needed to outrank the theme blocks above,
+     which match the same attribute.
+     */
+  :root, :root[data-theme] { --shadow-sm: 1px 1px 0 var(--ink); --shadow: 2px 2px 0 var(--ink); --shadow-lift: 3px 3px 0 var(--ink); --shadow-lg: 4px 4px 0 var(--ink); }
+  .topbar { gap: 5px; padding: 7px 8px; justify-content: space-between; }
+  /* Phones spread their clusters edge to edge (space-between). The brand's
+     margin-right is the manual gap between the name and the media buttons; on
+     a narrow bar the free space is near zero, so it reads flush. */
+  .group-view { margin-left: 0; padding-inline-start: 0; }
+  .brand { font-size: 12px; padding: 6px 8px; }
+  .group { gap: 5px; }
+  .btn { padding: 7px 8px; font-size: 12px; gap: 5px; }
+  .btn.icon { padding: 7px; }
+  .btn.primary { padding: 7px 10px; }
+  /* Every toolbar button goes icon-only on a phone — including Send, which is
+     why it drops the wider padding too. Its accessible name then comes from the
+     button's title, and while packing the spinning icon is the only feedback
+     (the label it would otherwise swap is hidden). */
+  #btn-export { padding: 7px; }
+  #btn-insert .btn-label, #btn-media .btn-label, #btn-export-label { display: none; }
+  .seg-btn { padding: 6px 7px; }
+  .editor { padding: 12px; font-size: 13px; }
+  .preview-pane { padding: 14px; }
+  .modal-card { max-height: 90vh; }
+  .modal-body { padding: 12px; }
+  .modal-head, .modal-foot { padding: 10px 12px; }
+}
